@@ -159,7 +159,7 @@ function buildCard(event, index) {
         <span class="card-field-icon">📍</span>
         <div class="card-field-content">
           <span class="card-field-label">Location</span>
-          <span class="card-field-value">${escHtml(event.location)}${event.zip_code ? `<span class="card-zip"> (${escHtml(event.zip_code)})</span>` : ''}</span>
+          <span class="card-field-value"><a class="card-location-link" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(event.location + (event.zip_code ? ' ' + event.zip_code : ''))}" target="_blank" rel="noopener noreferrer">${escHtml(event.location)}${event.zip_code ? `<span class="card-zip"> (${escHtml(event.zip_code)})</span>` : ''}</a></span>
         </div>
       </div>
 

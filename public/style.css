@@ -572,6 +572,17 @@ body {
   word-break: break-word;
 }
 
+.card-location-link {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: rgba(255,255,255,0.3);
+  text-underline-offset: 2px;
+}
+.card-location-link:hover {
+  text-decoration-color: var(--red);
+  color: var(--red);
+}
+
 .card-zip {
   font-weight: 400;
   opacity: 0.7;
