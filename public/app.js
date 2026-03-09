@@ -51,17 +51,6 @@ function addDays(dateStr, days) {
   return d.toISOString().slice(0, 10);
 }
 
-function endOfMonth(dateStr) {
-  const d = new Date(dateStr + 'T00:00:00');
-  d.setMonth(d.getMonth() + 1, 0);
-  return d.toISOString().slice(0, 10);
-}
-
-function addMonths(dateStr, months) {
-  const d = new Date(dateStr + 'T00:00:00');
-  d.setMonth(d.getMonth() + months);
-  return d.toISOString().slice(0, 10);
-}
 
 /* ─── Range Calculation ──────────────────────────────────────────────────────── */
 function getRangeDates(range) {
@@ -69,8 +58,6 @@ function getRangeDates(range) {
   switch (range) {
     case 'week':    return { from: today, to: addDays(today, 6) };
     case '2weeks':  return { from: today, to: addDays(today, 13) };
-    case 'month':   return { from: today, to: endOfMonth(today) };
-    case '3months': return { from: today, to: addMonths(today, 3) };
     case 'all':     return { from: today, to: null };
     case 'custom':  return { from: state.customFrom, to: state.customTo };
     default:        return { from: today, to: null };
