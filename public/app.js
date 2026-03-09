@@ -216,8 +216,10 @@ function buildCard(event, index) {
     <span class="suit-corner br">⚾</span>
   `;
 
-  card.querySelector('.card-btn-edit').addEventListener('click', () => openEditModal(event));
-  card.querySelector('.card-btn-delete').addEventListener('click', () => openDeleteConfirm(event.id));
+  if (state.token) {
+    card.querySelector('.card-btn-edit').addEventListener('click', () => openEditModal(event));
+    card.querySelector('.card-btn-delete').addEventListener('click', () => openDeleteConfirm(event.id));
+  }
 
   return card;
 }
