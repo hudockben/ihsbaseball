@@ -186,7 +186,7 @@ function buildCard(event, index) {
           <span class="card-field-icon black">🕐</span>
           <div class="card-field-content">
             <span class="card-field-label">Time</span>
-            <span class="card-field-value">${formatTime(event.event_time)}</span>
+            <span class="card-field-value">${formatTime(event.event_time)}${event.end_time ? ' – ' + formatTime(event.end_time) : ''}</span>
           </div>
         </div>
       </div>
@@ -371,6 +371,7 @@ function openEditModal(event) {
   document.getElementById('event-title').value = event.title;
   document.getElementById('event-date').value = event.event_date;
   document.getElementById('event-time').value = event.event_time;
+  document.getElementById('event-end-time').value = event.end_time || '';
   document.getElementById('event-location').value = event.location;
   document.getElementById('event-details').value = event.details || '';
   document.getElementById('event-modal-title').textContent = 'Edit Event';
@@ -397,6 +398,7 @@ document.getElementById('event-form').addEventListener('submit', async (e) => {
     title: document.getElementById('event-title').value.trim(),
     event_date: document.getElementById('event-date').value,
     event_time: document.getElementById('event-time').value,
+    end_time: document.getElementById('event-end-time').value || null,
     location: document.getElementById('event-location').value.trim(),
     details: document.getElementById('event-details').value.trim(),
   };
