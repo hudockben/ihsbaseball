@@ -1,80 +1,89 @@
 const express = require('express');
-const Database = require('better-sqlite3');
+const { neon } = require('@neondatabase/serverless');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const fetch = require('node-fetch');
 const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'ihs-calendar-secret-2024-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || 'ihs-calendar-secret-change-in-production';
 
-// Indiana County, PA coordinates (center of county, zip 15701 area)
+// @neondatabase/serverless uses the DATABASE_URL env var
+// sql`` tagged template returns rows as a plain array
+const sql = neon(process.env.DATABASE_URL || '');
+
+// Indiana County, PA coordinates (zip 15710 area)
 const NOAA_LAT = 40.6217;
 const NOAA_LON = -79.1552;
 
-// Database setup
-const db = new Database(path.join(__dirname, 'calendar.db'));
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    is_admin INTEGER DEFAULT 1,
-    created_at TEXT DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT NOT NULL,
-    location TEXT NOT NULL,
-    event_date TEXT NOT NULL,
-    event_time TEXT NOT NULL,
-    details TEXT,
-    created_by TEXT NOT NULL,
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
-  );
-`);
-
-// Seed default admin if no users exist
-const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get();
-if (userCount.count === 0) {
-  const hash = bcrypt.hashSync('admin123', 10);
-  db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run('admin', hash);
-  console.log('Default admin created: username=admin, password=admin123');
-  console.log('IMPORTANT: Change this password after first login!');
-}
-
-// Cache for NOAA grid info
 let noaaGridCache = null;
+let dbInitialized = false;
 
-async function getNoaaGrid() {
-  if (noaaGridCache) return noaaGridCache;
-  try {
-    const res = await fetch(
-      `https://api.weather.gov/points/${NOAA_LAT},${NOAA_LON}`,
-      { headers: { 'User-Agent': 'IHS-Calendar/1.0 (contact@example.com)' } }
-    );
-    if (!res.ok) throw new Error(`NOAA points failed: ${res.status}`);
-    const data = await res.json();
-    noaaGridCache = {
-      forecastUrl: data.properties.forecast,
-      forecastHourlyUrl: data.properties.forecastHourly,
-    };
-    return noaaGridCache;
-  } catch (err) {
-    console.error('NOAA grid fetch error:', err.message);
-    return null;
+/* ─── Database Init ──────────────────────────────────────────────────────────── */
+async function initDB() {
+  if (dbInitialized) return;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS users (
+      id            SERIAL PRIMARY KEY,
+      username      TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      created_at    TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS events (
+      id          SERIAL PRIMARY KEY,
+      title       TEXT NOT NULL,
+      location    TEXT NOT NULL,
+      event_date  DATE NOT NULL,
+      event_time  TIME NOT NULL,
+      details     TEXT DEFAULT '',
+      created_by  TEXT NOT NULL,
+      created_at  TIMESTAMPTZ DEFAULT NOW(),
+      updated_at  TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+
+  // Seed default admin only when the table is empty
+  const rows = await sql`SELECT COUNT(*)::int AS count FROM users`;
+  if (rows[0].count === 0) {
+    const hash = bcrypt.hashSync('admin123', 10);
+    await sql`INSERT INTO users (username, password_hash) VALUES ('admin', ${hash})`;
+    console.log('Default admin seeded: username=admin password=admin123');
   }
+
+  dbInitialized = true;
 }
 
-// Middleware
+// Normalise Postgres DATE/TIME columns to plain strings the frontend expects
+function normalizeEvent(row) {
+  const event_date =
+    row.event_date instanceof Date
+      ? row.event_date.toISOString().slice(0, 10)
+      : String(row.event_date).slice(0, 10);
+
+  const event_time = String(row.event_time).slice(0, 5); // HH:MM
+
+  return { ...row, event_date, event_time };
+}
+
+/* ─── Middleware ─────────────────────────────────────────────────────────────── */
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Auth middleware
+// Run DB init before every API request (idempotent, fast after first call)
+app.use('/api', async (req, res, next) => {
+  try {
+    await initDB();
+    next();
+  } catch (err) {
+    console.error('DB init error:', err);
+    res.status(500).json({ error: 'Database initialisation failed: ' + err.message });
+  }
+});
+
 function requireAuth(req, res, next) {
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith('Bearer ')) {
@@ -84,34 +93,32 @@ function requireAuth(req, res, next) {
     req.user = jwt.verify(auth.slice(7), JWT_SECRET);
     next();
   } catch {
-    res.status(401).json({ error: 'Invalid token' });
+    res.status(401).json({ error: 'Invalid or expired token' });
   }
 }
 
-// ─── Auth Routes ───────────────────────────────────────────────────────────────
-
-app.post('/api/auth/login', (req, res) => {
+/* ─── Auth Routes ────────────────────────────────────────────────────────────── */
+app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password required' });
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+  const rows = await sql`SELECT * FROM users WHERE username = ${username}`;
+  const user = rows[0];
   if (!user || !bcrypt.compareSync(password, user.password_hash)) {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
   const token = jwt.sign(
-    { id: user.id, username: user.username, is_admin: user.is_admin },
+    { id: user.id, username: user.username },
     JWT_SECRET,
     { expiresIn: '8h' }
   );
-
   res.json({ token, username: user.username });
 });
 
-// Create a new user (admin only)
-app.post('/api/auth/create-user', requireAuth, (req, res) => {
+app.post('/api/auth/create-user', requireAuth, async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password required' });
@@ -122,18 +129,17 @@ app.post('/api/auth/create-user', requireAuth, (req, res) => {
 
   try {
     const hash = bcrypt.hashSync(password, 10);
-    db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(username, hash);
+    await sql`INSERT INTO users (username, password_hash) VALUES (${username}, ${hash})`;
     res.json({ message: `User "${username}" created successfully` });
   } catch (err) {
-    if (err.message.includes('UNIQUE')) {
+    if (err.message.includes('unique') || err.message.includes('duplicate')) {
       return res.status(409).json({ error: 'Username already exists' });
     }
     res.status(500).json({ error: 'Failed to create user' });
   }
 });
 
-// Change password
-app.post('/api/auth/change-password', requireAuth, (req, res) => {
+app.post('/api/auth/change-password', requireAuth, async (req, res) => {
   const { current_password, new_password } = req.body;
   if (!current_password || !new_password) {
     return res.status(400).json({ error: 'Both current and new password required' });
@@ -142,99 +148,116 @@ app.post('/api/auth/change-password', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'New password must be at least 6 characters' });
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  if (!bcrypt.compareSync(current_password, user.password_hash)) {
+  const rows = await sql`SELECT * FROM users WHERE id = ${req.user.id}`;
+  if (!bcrypt.compareSync(current_password, rows[0].password_hash)) {
     return res.status(401).json({ error: 'Current password is incorrect' });
   }
 
   const hash = bcrypt.hashSync(new_password, 10);
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, req.user.id);
+  await sql`UPDATE users SET password_hash = ${hash} WHERE id = ${req.user.id}`;
   res.json({ message: 'Password changed successfully' });
 });
 
-// List users (admin only)
-app.get('/api/auth/users', requireAuth, (req, res) => {
-  const users = db.prepare('SELECT id, username, created_at FROM users ORDER BY username').all();
-  res.json(users);
+app.get('/api/auth/users', requireAuth, async (req, res) => {
+  const rows = await sql`SELECT id, username, created_at FROM users ORDER BY username`;
+  res.json(rows);
 });
 
-// Delete user (admin only, cannot delete yourself)
-app.delete('/api/auth/users/:id', requireAuth, (req, res) => {
-  const targetId = parseInt(req.params.id);
+app.delete('/api/auth/users/:id', requireAuth, async (req, res) => {
+  const targetId = parseInt(req.params.id, 10);
   if (targetId === req.user.id) {
     return res.status(400).json({ error: 'Cannot delete your own account' });
   }
-  db.prepare('DELETE FROM users WHERE id = ?').run(targetId);
+  await sql`DELETE FROM users WHERE id = ${targetId}`;
   res.json({ message: 'User deleted' });
 });
 
-// ─── Events Routes ─────────────────────────────────────────────────────────────
-
-// Get events with optional date range filter
-app.get('/api/events', (req, res) => {
+/* ─── Events Routes ──────────────────────────────────────────────────────────── */
+app.get('/api/events', async (req, res) => {
   const { from, to } = req.query;
 
-  let query = 'SELECT * FROM events WHERE 1=1';
-  const params = [];
-
-  if (from) {
-    query += ' AND event_date >= ?';
-    params.push(from);
+  let rows;
+  if (from && to) {
+    rows = await sql`
+      SELECT * FROM events
+      WHERE event_date >= ${from} AND event_date <= ${to}
+      ORDER BY event_date ASC, event_time ASC
+    `;
+  } else if (from) {
+    rows = await sql`
+      SELECT * FROM events
+      WHERE event_date >= ${from}
+      ORDER BY event_date ASC, event_time ASC
+    `;
+  } else if (to) {
+    rows = await sql`
+      SELECT * FROM events
+      WHERE event_date <= ${to}
+      ORDER BY event_date ASC, event_time ASC
+    `;
+  } else {
+    rows = await sql`SELECT * FROM events ORDER BY event_date ASC, event_time ASC`;
   }
-  if (to) {
-    query += ' AND event_date <= ?';
-    params.push(to);
-  }
 
-  query += ' ORDER BY event_date ASC, event_time ASC';
-
-  const events = db.prepare(query).all(...params);
-  res.json(events);
+  res.json(rows.map(normalizeEvent));
 });
 
-// Create event
-app.post('/api/events', requireAuth, (req, res) => {
+app.post('/api/events', requireAuth, async (req, res) => {
   const { title, location, event_date, event_time, details } = req.body;
   if (!title || !location || !event_date || !event_time) {
     return res.status(400).json({ error: 'Title, location, date, and time are required' });
   }
 
-  const result = db.prepare(
-    'INSERT INTO events (title, location, event_date, event_time, details, created_by) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(title, location, event_date, event_time, details || '', req.user.username);
-
-  const event = db.prepare('SELECT * FROM events WHERE id = ?').get(result.lastInsertRowid);
-  res.status(201).json(event);
+  const rows = await sql`
+    INSERT INTO events (title, location, event_date, event_time, details, created_by)
+    VALUES (${title}, ${location}, ${event_date}, ${event_time}, ${details || ''}, ${req.user.username})
+    RETURNING *
+  `;
+  res.status(201).json(normalizeEvent(rows[0]));
 });
 
-// Update event
-app.put('/api/events/:id', requireAuth, (req, res) => {
+app.put('/api/events/:id', requireAuth, async (req, res) => {
   const { title, location, event_date, event_time, details } = req.body;
   if (!title || !location || !event_date || !event_time) {
     return res.status(400).json({ error: 'Title, location, date, and time are required' });
   }
 
-  const existing = db.prepare('SELECT * FROM events WHERE id = ?').get(req.params.id);
-  if (!existing) return res.status(404).json({ error: 'Event not found' });
-
-  db.prepare(
-    `UPDATE events SET title=?, location=?, event_date=?, event_time=?, details=?, updated_at=datetime('now') WHERE id=?`
-  ).run(title, location, event_date, event_time, details || '', req.params.id);
-
-  const event = db.prepare('SELECT * FROM events WHERE id = ?').get(req.params.id);
-  res.json(event);
+  const rows = await sql`
+    UPDATE events
+    SET title      = ${title},
+        location   = ${location},
+        event_date = ${event_date},
+        event_time = ${event_time},
+        details    = ${details || ''},
+        updated_at = NOW()
+    WHERE id = ${req.params.id}
+    RETURNING *
+  `;
+  if (!rows.length) return res.status(404).json({ error: 'Event not found' });
+  res.json(normalizeEvent(rows[0]));
 });
 
-// Delete event
-app.delete('/api/events/:id', requireAuth, (req, res) => {
-  const existing = db.prepare('SELECT * FROM events WHERE id = ?').get(req.params.id);
-  if (!existing) return res.status(404).json({ error: 'Event not found' });
-
-  db.prepare('DELETE FROM events WHERE id = ?').run(req.params.id);
+app.delete('/api/events/:id', requireAuth, async (req, res) => {
+  const rows = await sql`DELETE FROM events WHERE id = ${req.params.id} RETURNING id`;
+  if (!rows.length) return res.status(404).json({ error: 'Event not found' });
   res.json({ message: 'Event deleted' });
 });
 
-// ─── Weather Route ──────────────────────────────────────────────────────────────
+/* ─── Weather Route (NOAA proxy) ─────────────────────────────────────────────── */
+async function getNoaaGrid() {
+  if (noaaGridCache) return noaaGridCache;
+  const res = await fetch(
+    `https://api.weather.gov/points/${NOAA_LAT},${NOAA_LON}`,
+    {
+      headers: { 'User-Agent': 'IHS-Calendar/1.0 (contact@example.com)' },
+      signal: AbortSignal.timeout(8000),
+    }
+  );
+  if (!res.ok) throw new Error(`NOAA points API returned ${res.status}`);
+  const data = await res.json();
+  noaaGridCache = { forecastUrl: data.properties.forecast };
+  return noaaGridCache;
+}
 
 app.get('/api/weather', async (req, res) => {
   const { date } = req.query;
@@ -242,50 +265,30 @@ app.get('/api/weather', async (req, res) => {
 
   try {
     const grid = await getNoaaGrid();
-    if (!grid) return res.json({ forecast: 'Weather unavailable', icon: 'cloudy' });
-
     const forecastRes = await fetch(grid.forecastUrl, {
-      headers: { 'User-Agent': 'IHS-Calendar/1.0 (contact@example.com)' }
+      headers: { 'User-Agent': 'IHS-Calendar/1.0 (contact@example.com)' },
+      signal: AbortSignal.timeout(8000),
     });
     if (!forecastRes.ok) return res.json({ forecast: 'Weather unavailable', icon: 'cloudy' });
 
     const forecastData = await forecastRes.json();
     const periods = forecastData.properties.periods;
 
-    // Find the period that matches the requested date
-    const targetDate = new Date(date + 'T12:00:00');
-    let matched = null;
+    const target = new Date(date + 'T12:00:00');
+    const matched =
+      periods.find(p => target >= new Date(p.startTime) && target < new Date(p.endTime)) ||
+      periods.find(p => p.startTime.startsWith(date) && p.isDaytime) ||
+      periods.find(p => p.startTime.startsWith(date));
 
-    for (const period of periods) {
-      const start = new Date(period.startTime);
-      const end = new Date(period.endTime);
-      if (targetDate >= start && targetDate < end) {
-        matched = period;
-        break;
-      }
-    }
+    if (!matched) return res.json({ forecast: 'Forecast not yet available', icon: 'unknown' });
 
-    // If no exact match, find the daytime period closest to the date
-    if (!matched) {
-      const dateStr = date; // YYYY-MM-DD
-      matched = periods.find(p => p.startTime.startsWith(dateStr) && p.isDaytime);
-      if (!matched) matched = periods.find(p => p.startTime.startsWith(dateStr));
-    }
-
-    if (!matched) {
-      return res.json({ forecast: 'Forecast not yet available', icon: 'unknown' });
-    }
-
-    // Determine icon type from shortForecast
     const short = (matched.shortForecast || '').toLowerCase();
-    let icon = 'sunny';
-    if (short.includes('thunder') || short.includes('storm')) icon = 'storm';
-    else if (short.includes('snow') || short.includes('blizzard')) icon = 'snow';
+    let icon = 'partly';
+    if (short.includes('thunder') || short.includes('storm'))                             icon = 'storm';
+    else if (short.includes('snow') || short.includes('blizzard'))                        icon = 'snow';
     else if (short.includes('rain') || short.includes('shower') || short.includes('drizzle')) icon = 'rain';
-    else if (short.includes('cloud') || short.includes('overcast')) icon = 'cloudy';
-    else if (short.includes('partly') || short.includes('mostly sunny') || short.includes('mostly clear')) icon = 'partly';
-    else if (short.includes('clear') || short.includes('sunny')) icon = 'sunny';
-    else icon = 'partly';
+    else if (short.includes('cloud') || short.includes('overcast'))                       icon = 'cloudy';
+    else if (short.includes('clear') || (short.includes('sunny') && !short.includes('partly'))) icon = 'sunny';
 
     res.json({
       forecast: matched.shortForecast,
@@ -294,19 +297,21 @@ app.get('/api/weather', async (req, res) => {
       windSpeed: matched.windSpeed,
       windDirection: matched.windDirection,
       icon,
-      isDaytime: matched.isDaytime,
     });
   } catch (err) {
-    console.error('Weather fetch error:', err.message);
+    console.error('Weather error:', err.message);
     res.json({ forecast: 'Weather unavailable', icon: 'cloudy' });
   }
 });
 
-// Serve frontend
+/* ─── SPA Fallback ───────────────────────────────────────────────────────────── */
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, () => {
-  console.log(`IHS Calendar running at http://localhost:${PORT}`);
-});
+/* ─── Start (local dev only) ─────────────────────────────────────────────────── */
+if (require.main === module) {
+  app.listen(PORT, () => console.log(`IHS Calendar → http://localhost:${PORT}`));
+}
+
+module.exports = app;
