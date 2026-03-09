@@ -205,10 +205,11 @@ function buildCard(event, index) {
 
     <div class="card-footer">
       <span class="card-by">Added by ${escHtml(event.created_by)}</span>
+      ${state.token ? `
       <div class="card-actions">
         <button class="card-btn card-btn-edit" data-id="${event.id}">Edit</button>
         <button class="card-btn card-btn-delete" data-id="${event.id}">Delete</button>
-      </div>
+      </div>` : ''}
     </div>
 
     <span class="suit-corner bl">⚾</span>
@@ -279,7 +280,7 @@ async function loadEvents() {
   }
 }
 
-/* ─── Auth ───────────────────────────────────────────────────────────────────── */
+/* ─── Auth / View Mode ───────────────────────────────────────────────────────── */
 function setSession(token, username) {
   state.token = token;
   state.username = username;
@@ -294,20 +295,38 @@ function clearSession() {
   localStorage.removeItem('ihs_username');
 }
 
-function showApp() {
-  hideOverlay('login-overlay');
-  show(document.getElementById('app'));
-  document.getElementById('header-username').textContent = `Signed in as ${state.username}`;
+const adminEls = ['header-username', 'btn-manage-users', 'btn-add-event', 'btn-logout'];
+
+function setAdminMode(isAdmin) {
+  const signinBtn = document.getElementById('btn-signin');
+  adminEls.forEach(id => {
+    const el = document.getElementById(id);
+    isAdmin ? show(el) : hide(el);
+  });
+  isAdmin ? hide(signinBtn) : show(signinBtn);
+
+  if (isAdmin) {
+    document.getElementById('header-username').textContent = `Signed in as ${state.username}`;
+  }
+
+  // Refresh cards to show/hide edit+delete buttons
+  const addEmptyBtn = document.getElementById('btn-add-event-empty');
+  isAdmin ? show(addEmptyBtn) : hide(addEmptyBtn);
+
   loadEvents();
 }
 
-function showLogin() {
-  hide(document.getElementById('app'));
+/* ─── Login Modal ────────────────────────────────────────────────────────────── */
+document.getElementById('btn-signin').addEventListener('click', () => {
+  document.getElementById('login-form').reset();
+  clearMsg(document.getElementById('login-error'));
   showOverlay('login-overlay');
-  clearSession();
-}
+});
 
-/* ─── Login Form ─────────────────────────────────────────────────────────────── */
+document.getElementById('login-modal-close').addEventListener('click', () => {
+  hideOverlay('login-overlay');
+});
+
 document.getElementById('login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const err = document.getElementById('login-error');
@@ -322,7 +341,8 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
       body: JSON.stringify({ username, password }),
     });
     setSession(data.token, data.username);
-    showApp();
+    hideOverlay('login-overlay');
+    setAdminMode(true);
   } catch (e2) {
     fmt(err, e2.message);
   }
@@ -330,7 +350,8 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
 
 /* ─── Logout ─────────────────────────────────────────────────────────────────── */
 document.getElementById('btn-logout').addEventListener('click', () => {
-  showLogin();
+  clearSession();
+  setAdminMode(false);
 });
 
 /* ─── Filter Chips ───────────────────────────────────────────────────────────── */
@@ -545,7 +566,7 @@ document.getElementById('change-password-form').addEventListener('submit', async
 });
 
 /* ─── Close overlays on backdrop click ──────────────────────────────────────── */
-['event-overlay', 'users-overlay', 'confirm-overlay'].forEach(id => {
+['login-overlay', 'event-overlay', 'users-overlay', 'confirm-overlay'].forEach(id => {
   document.getElementById(id).addEventListener('click', (e) => {
     if (e.target === e.currentTarget) {
       e.currentTarget.classList.remove('active');
@@ -557,14 +578,15 @@ document.getElementById('change-password-form').addEventListener('submit', async
 /* ─── Init ───────────────────────────────────────────────────────────────────── */
 (async function init() {
   if (state.token) {
-    // Verify token is still valid
+    // Verify saved token is still valid; fall back to viewer mode if not
     try {
-      await apiFetch('/api/events?from=' + todayStr() + '&to=' + todayStr());
-      showApp();
+      await apiFetch('/api/auth/users'); // lightweight auth check
+      setAdminMode(true);
+      return;
     } catch {
-      showLogin();
+      clearSession();
     }
-  } else {
-    showOverlay('login-overlay');
   }
+  // Viewer mode: show calendar without admin controls
+  setAdminMode(false);
 })();

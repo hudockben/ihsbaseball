@@ -9,12 +9,13 @@
 <body>
 
   <!-- ─── Login Modal ──────────────────────────────────────────────────────── -->
-  <div id="login-overlay" class="overlay active">
+  <div id="login-overlay" class="overlay">
     <div class="modal card-modal">
       <div class="card-corner top-left">⚾</div>
       <div class="card-corner top-right">⚾</div>
-      <h2 class="modal-title">IHS BASEBALL</h2>
-      <p class="modal-subtitle">Event Calendar</p>
+      <button class="modal-close" id="login-modal-close">&times;</button>
+      <h2 class="modal-title">Admin Sign In</h2>
+      <p class="modal-subtitle">IHS Baseball Calendar</p>
       <form id="login-form">
         <div class="form-group">
           <label for="login-username">Username</label>
@@ -126,7 +127,7 @@
   </div>
 
   <!-- ─── Main App ─────────────────────────────────────────────────────────── -->
-  <div id="app" class="hidden">
+  <div id="app">
 
     <!-- Header -->
     <header class="site-header">
@@ -140,10 +141,13 @@
           <span class="header-suits">⚾</span>
         </div>
         <div class="header-actions">
-          <span class="header-user" id="header-username"></span>
-          <button class="btn btn-ghost btn-sm" id="btn-manage-users">Users</button>
-          <button class="btn btn-primary btn-sm" id="btn-add-event">+ Add Event</button>
-          <button class="btn btn-ghost btn-sm" id="btn-logout">Sign Out</button>
+          <!-- Viewer mode -->
+          <button class="btn btn-ghost btn-sm" id="btn-signin">Sign In</button>
+          <!-- Admin mode (hidden until signed in) -->
+          <span class="header-user hidden" id="header-username"></span>
+          <button class="btn btn-ghost btn-sm hidden" id="btn-manage-users">Users</button>
+          <button class="btn btn-primary btn-sm hidden" id="btn-add-event">+ Add Event</button>
+          <button class="btn btn-ghost btn-sm hidden" id="btn-logout">Sign Out</button>
         </div>
       </div>
     </header>
@@ -179,7 +183,7 @@
         <div class="empty-suits">⚾</div>
         <h3>No events scheduled</h3>
         <p>No events found for the selected date range.</p>
-        <button class="btn btn-primary" id="btn-add-event-empty">+ Add First Event</button>
+        <button class="btn btn-primary hidden" id="btn-add-event-empty">+ Add First Event</button>
       </div>
       <div id="events-grid" class="events-grid"></div>
     </main>
