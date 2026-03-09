@@ -39,12 +39,16 @@ async function initDB() {
       location    TEXT NOT NULL,
       event_date  DATE NOT NULL,
       event_time  TIME NOT NULL,
+      end_time    TIME,
       details     TEXT DEFAULT '',
       created_by  TEXT NOT NULL,
       created_at  TIMESTAMPTZ DEFAULT NOW(),
       updated_at  TIMESTAMPTZ DEFAULT NOW()
     )
   `;
+
+  // Migration: add end_time to existing tables that predate this column
+  await sql`ALTER TABLE events ADD COLUMN IF NOT EXISTS end_time TIME`;
 
   // Seed default admin only when the table is empty
   const rows = await sql`SELECT COUNT(*)::int AS count FROM users`;
@@ -65,8 +69,9 @@ function normalizeEvent(row) {
       : String(row.event_date).slice(0, 10);
 
   const event_time = String(row.event_time).slice(0, 5); // HH:MM
+  const end_time = row.end_time ? String(row.end_time).slice(0, 5) : null;
 
-  return { ...row, event_date, event_time };
+  return { ...row, event_date, event_time, end_time };
 }
 
 /* ─── Middleware ─────────────────────────────────────────────────────────────── */
@@ -203,21 +208,21 @@ app.get('/api/events', async (req, res) => {
 });
 
 app.post('/api/events', requireAuth, async (req, res) => {
-  const { title, location, event_date, event_time, details } = req.body;
+  const { title, location, event_date, event_time, end_time, details } = req.body;
   if (!title || !location || !event_date || !event_time) {
     return res.status(400).json({ error: 'Title, location, date, and time are required' });
   }
 
   const rows = await sql`
-    INSERT INTO events (title, location, event_date, event_time, details, created_by)
-    VALUES (${title}, ${location}, ${event_date}, ${event_time}, ${details || ''}, ${req.user.username})
+    INSERT INTO events (title, location, event_date, event_time, end_time, details, created_by)
+    VALUES (${title}, ${location}, ${event_date}, ${event_time}, ${end_time || null}, ${details || ''}, ${req.user.username})
     RETURNING *
   `;
   res.status(201).json(normalizeEvent(rows[0]));
 });
 
 app.put('/api/events/:id', requireAuth, async (req, res) => {
-  const { title, location, event_date, event_time, details } = req.body;
+  const { title, location, event_date, event_time, end_time, details } = req.body;
   if (!title || !location || !event_date || !event_time) {
     return res.status(400).json({ error: 'Title, location, date, and time are required' });
   }
@@ -228,6 +233,7 @@ app.put('/api/events/:id', requireAuth, async (req, res) => {
         location   = ${location},
         event_date = ${event_date},
         event_time = ${event_time},
+        end_time   = ${end_time || null},
         details    = ${details || ''},
         updated_at = NOW()
     WHERE id = ${req.params.id}

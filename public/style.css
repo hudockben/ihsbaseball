@@ -165,7 +165,7 @@ body {
 .form-row {
   display: grid;
   gap: 1rem;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
 }
 
 .form-actions {
@@ -271,10 +271,9 @@ body {
 
 /* Card corners on modals */
 .card-corner {
-  color: var(--red);
-  font-size: 1.2rem;
-  font-weight: 700;
+  font-size: 1.1rem;
   line-height: 1;
+  opacity: 0.6;
   position: absolute;
 }
 
@@ -310,10 +309,8 @@ body {
 }
 
 .header-suits {
-  color: var(--red);
-  font-size: 1.4rem;
-  letter-spacing: 0.1em;
-  text-shadow: 0 0 10px var(--red-glow);
+  font-size: 1.6rem;
+  opacity: 0.85;
 }
 
 .header-title {
@@ -442,17 +439,15 @@ body {
 
 .loading-suits {
   animation: pulse 1.5s ease-in-out infinite;
-  color: var(--red);
   font-size: 2.5rem;
-  letter-spacing: 0.4em;
+  letter-spacing: 0.5em;
   margin-bottom: 1rem;
 }
 
 .empty-suits {
-  color: var(--black-border);
-  font-size: 3rem;
-  letter-spacing: 0.4em;
+  font-size: 3.5rem;
   margin-bottom: 1rem;
+  opacity: 0.25;
 }
 
 .empty-state h3 {
@@ -499,15 +494,11 @@ body {
 
 /* Card suit corners */
 .event-card .suit-corner {
-  color: var(--red);
-  font-size: 0.95rem;
-  font-weight: 900;
+  font-size: 0.9rem;
   line-height: 1;
+  opacity: 0.55;
   position: absolute;
   user-select: none;
-}
-.event-card .suit-corner.black-suit {
-  color: var(--black);
 }
 .event-card .suit-corner.tl { left: 0.75rem; top: 0.6rem; }
 .event-card .suit-corner.tr { right: 0.75rem; top: 0.6rem; }

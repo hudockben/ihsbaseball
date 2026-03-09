@@ -152,29 +152,14 @@ async function injectWeather(cardEl, date) {
 }
 
 /* ─── Card Rendering ─────────────────────────────────────────────────────────── */
-const SUITS = ['♥', '♦', '♣', '♠'];
-const SUIT_BLACK = ['♣', '♠'];
-
-function getSuit(index) {
-  return SUITS[index % SUITS.length];
-}
-
-function isBlackSuit(suit) {
-  return SUIT_BLACK.includes(suit);
-}
-
 function buildCard(event, index) {
-  const suit = getSuit(index);
-  const black = isBlackSuit(suit);
-  const suitClass = black ? 'black-suit' : '';
-
   const card = document.createElement('article');
   card.className = 'event-card';
   card.dataset.id = event.id;
 
   card.innerHTML = `
-    <span class="suit-corner tl ${suitClass}">${suit}</span>
-    <span class="suit-corner tr ${suitClass}">${suit}</span>
+    <span class="suit-corner tl">⚾</span>
+    <span class="suit-corner tr">⚾</span>
 
     <div class="card-header">
       <div class="card-event-title">${escHtml(event.title)}</div>
@@ -201,7 +186,7 @@ function buildCard(event, index) {
           <span class="card-field-icon black">🕐</span>
           <div class="card-field-content">
             <span class="card-field-label">Time</span>
-            <span class="card-field-value">${formatTime(event.event_time)}</span>
+            <span class="card-field-value">${formatTime(event.event_time)}${event.end_time ? ' – ' + formatTime(event.end_time) : ''}</span>
           </div>
         </div>
       </div>
@@ -220,14 +205,15 @@ function buildCard(event, index) {
 
     <div class="card-footer">
       <span class="card-by">Added by ${escHtml(event.created_by)}</span>
+      ${state.token ? `
       <div class="card-actions">
         <button class="card-btn card-btn-edit" data-id="${event.id}">Edit</button>
         <button class="card-btn card-btn-delete" data-id="${event.id}">Delete</button>
-      </div>
+      </div>` : ''}
     </div>
 
-    <span class="suit-corner bl ${suitClass}">${suit}</span>
-    <span class="suit-corner br ${suitClass}">${suit}</span>
+    <span class="suit-corner bl">⚾</span>
+    <span class="suit-corner br">⚾</span>
   `;
 
   card.querySelector('.card-btn-edit').addEventListener('click', () => openEditModal(event));
@@ -294,7 +280,7 @@ async function loadEvents() {
   }
 }
 
-/* ─── Auth ───────────────────────────────────────────────────────────────────── */
+/* ─── Auth / View Mode ───────────────────────────────────────────────────────── */
 function setSession(token, username) {
   state.token = token;
   state.username = username;
@@ -309,20 +295,38 @@ function clearSession() {
   localStorage.removeItem('ihs_username');
 }
 
-function showApp() {
-  hideOverlay('login-overlay');
-  show(document.getElementById('app'));
-  document.getElementById('header-username').textContent = `Signed in as ${state.username}`;
+const adminEls = ['header-username', 'btn-manage-users', 'btn-add-event', 'btn-logout'];
+
+function setAdminMode(isAdmin) {
+  const signinBtn = document.getElementById('btn-signin');
+  adminEls.forEach(id => {
+    const el = document.getElementById(id);
+    isAdmin ? show(el) : hide(el);
+  });
+  isAdmin ? hide(signinBtn) : show(signinBtn);
+
+  if (isAdmin) {
+    document.getElementById('header-username').textContent = `Signed in as ${state.username}`;
+  }
+
+  // Refresh cards to show/hide edit+delete buttons
+  const addEmptyBtn = document.getElementById('btn-add-event-empty');
+  isAdmin ? show(addEmptyBtn) : hide(addEmptyBtn);
+
   loadEvents();
 }
 
-function showLogin() {
-  hide(document.getElementById('app'));
+/* ─── Login Modal ────────────────────────────────────────────────────────────── */
+document.getElementById('btn-signin').addEventListener('click', () => {
+  document.getElementById('login-form').reset();
+  clearMsg(document.getElementById('login-error'));
   showOverlay('login-overlay');
-  clearSession();
-}
+});
 
-/* ─── Login Form ─────────────────────────────────────────────────────────────── */
+document.getElementById('login-modal-close').addEventListener('click', () => {
+  hideOverlay('login-overlay');
+});
+
 document.getElementById('login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const err = document.getElementById('login-error');
@@ -337,7 +341,8 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
       body: JSON.stringify({ username, password }),
     });
     setSession(data.token, data.username);
-    showApp();
+    hideOverlay('login-overlay');
+    setAdminMode(true);
   } catch (e2) {
     fmt(err, e2.message);
   }
@@ -345,7 +350,8 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
 
 /* ─── Logout ─────────────────────────────────────────────────────────────────── */
 document.getElementById('btn-logout').addEventListener('click', () => {
-  showLogin();
+  clearSession();
+  setAdminMode(false);
 });
 
 /* ─── Filter Chips ───────────────────────────────────────────────────────────── */
@@ -377,9 +383,6 @@ function openAddModal() {
   form.reset();
   document.getElementById('event-id').value = '';
   document.getElementById('event-modal-title').textContent = 'New Event';
-  // Set suit to red hearts for add
-  ['event-modal-suit-tl', 'event-modal-suit-tr', 'event-modal-suit-bl', 'event-modal-suit-br']
-    .forEach(id => { document.getElementById(id).textContent = '♥'; });
   clearMsg(document.getElementById('event-error'));
   showOverlay('event-overlay');
 }
@@ -389,12 +392,10 @@ function openEditModal(event) {
   document.getElementById('event-title').value = event.title;
   document.getElementById('event-date').value = event.event_date;
   document.getElementById('event-time').value = event.event_time;
+  document.getElementById('event-end-time').value = event.end_time || '';
   document.getElementById('event-location').value = event.location;
   document.getElementById('event-details').value = event.details || '';
   document.getElementById('event-modal-title').textContent = 'Edit Event';
-  // Diamonds for edit
-  ['event-modal-suit-tl', 'event-modal-suit-tr', 'event-modal-suit-bl', 'event-modal-suit-br']
-    .forEach(id => { document.getElementById(id).textContent = '♦'; });
   clearMsg(document.getElementById('event-error'));
   showOverlay('event-overlay');
 }
@@ -418,6 +419,7 @@ document.getElementById('event-form').addEventListener('submit', async (e) => {
     title: document.getElementById('event-title').value.trim(),
     event_date: document.getElementById('event-date').value,
     event_time: document.getElementById('event-time').value,
+    end_time: document.getElementById('event-end-time').value || null,
     location: document.getElementById('event-location').value.trim(),
     details: document.getElementById('event-details').value.trim(),
   };
@@ -564,7 +566,7 @@ document.getElementById('change-password-form').addEventListener('submit', async
 });
 
 /* ─── Close overlays on backdrop click ──────────────────────────────────────── */
-['event-overlay', 'users-overlay', 'confirm-overlay'].forEach(id => {
+['login-overlay', 'event-overlay', 'users-overlay', 'confirm-overlay'].forEach(id => {
   document.getElementById(id).addEventListener('click', (e) => {
     if (e.target === e.currentTarget) {
       e.currentTarget.classList.remove('active');
@@ -576,14 +578,15 @@ document.getElementById('change-password-form').addEventListener('submit', async
 /* ─── Init ───────────────────────────────────────────────────────────────────── */
 (async function init() {
   if (state.token) {
-    // Verify token is still valid
+    // Verify saved token is still valid; fall back to viewer mode if not
     try {
-      await apiFetch('/api/events?from=' + todayStr() + '&to=' + todayStr());
-      showApp();
+      await apiFetch('/api/auth/users'); // lightweight auth check
+      setAdminMode(true);
+      return;
     } catch {
-      showLogin();
+      clearSession();
     }
-  } else {
-    showOverlay('login-overlay');
   }
+  // Viewer mode: show calendar without admin controls
+  setAdminMode(false);
 })();
