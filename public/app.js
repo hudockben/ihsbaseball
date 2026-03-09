@@ -152,29 +152,14 @@ async function injectWeather(cardEl, date) {
 }
 
 /* ─── Card Rendering ─────────────────────────────────────────────────────────── */
-const SUITS = ['♥', '♦', '♣', '♠'];
-const SUIT_BLACK = ['♣', '♠'];
-
-function getSuit(index) {
-  return SUITS[index % SUITS.length];
-}
-
-function isBlackSuit(suit) {
-  return SUIT_BLACK.includes(suit);
-}
-
 function buildCard(event, index) {
-  const suit = getSuit(index);
-  const black = isBlackSuit(suit);
-  const suitClass = black ? 'black-suit' : '';
-
   const card = document.createElement('article');
   card.className = 'event-card';
   card.dataset.id = event.id;
 
   card.innerHTML = `
-    <span class="suit-corner tl ${suitClass}">${suit}</span>
-    <span class="suit-corner tr ${suitClass}">${suit}</span>
+    <span class="suit-corner tl">⚾</span>
+    <span class="suit-corner tr">⚾</span>
 
     <div class="card-header">
       <div class="card-event-title">${escHtml(event.title)}</div>
@@ -226,8 +211,8 @@ function buildCard(event, index) {
       </div>
     </div>
 
-    <span class="suit-corner bl ${suitClass}">${suit}</span>
-    <span class="suit-corner br ${suitClass}">${suit}</span>
+    <span class="suit-corner bl">⚾</span>
+    <span class="suit-corner br">⚾</span>
   `;
 
   card.querySelector('.card-btn-edit').addEventListener('click', () => openEditModal(event));
@@ -377,9 +362,6 @@ function openAddModal() {
   form.reset();
   document.getElementById('event-id').value = '';
   document.getElementById('event-modal-title').textContent = 'New Event';
-  // Set suit to red hearts for add
-  ['event-modal-suit-tl', 'event-modal-suit-tr', 'event-modal-suit-bl', 'event-modal-suit-br']
-    .forEach(id => { document.getElementById(id).textContent = '♥'; });
   clearMsg(document.getElementById('event-error'));
   showOverlay('event-overlay');
 }
@@ -392,9 +374,6 @@ function openEditModal(event) {
   document.getElementById('event-location').value = event.location;
   document.getElementById('event-details').value = event.details || '';
   document.getElementById('event-modal-title').textContent = 'Edit Event';
-  // Diamonds for edit
-  ['event-modal-suit-tl', 'event-modal-suit-tr', 'event-modal-suit-bl', 'event-modal-suit-br']
-    .forEach(id => { document.getElementById(id).textContent = '♦'; });
   clearMsg(document.getElementById('event-error'));
   showOverlay('event-overlay');
 }
