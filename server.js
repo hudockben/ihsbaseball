@@ -52,6 +52,9 @@ async function initDB() {
   await sql`ALTER TABLE events ADD COLUMN IF NOT EXISTS end_time TIME`;
   await sql`ALTER TABLE events ADD COLUMN IF NOT EXISTS zip_code TEXT`;
 
+  // Remove events whose date has already passed
+  await sql`DELETE FROM events WHERE event_date < CURRENT_DATE`;
+
   // Seed default admin only when the table is empty
   const rows = await sql`SELECT COUNT(*)::int AS count FROM users`;
   if (rows[0].count === 0) {
@@ -185,26 +188,19 @@ app.get('/api/events', async (req, res) => {
   const { from, to } = req.query;
 
   let rows;
-  if (from && to) {
+  const floor = from && from >= new Date().toISOString().slice(0, 10) ? from : new Date().toISOString().slice(0, 10);
+  if (to) {
     rows = await sql`
       SELECT * FROM events
-      WHERE event_date >= ${from} AND event_date <= ${to}
-      ORDER BY event_date ASC, event_time ASC
-    `;
-  } else if (from) {
-    rows = await sql`
-      SELECT * FROM events
-      WHERE event_date >= ${from}
-      ORDER BY event_date ASC, event_time ASC
-    `;
-  } else if (to) {
-    rows = await sql`
-      SELECT * FROM events
-      WHERE event_date <= ${to}
+      WHERE event_date >= ${floor} AND event_date <= ${to}
       ORDER BY event_date ASC, event_time ASC
     `;
   } else {
-    rows = await sql`SELECT * FROM events ORDER BY event_date ASC, event_time ASC`;
+    rows = await sql`
+      SELECT * FROM events
+      WHERE event_date >= ${floor}
+      ORDER BY event_date ASC, event_time ASC
+    `;
   }
 
   res.json(rows.map(normalizeEvent));
