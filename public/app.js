@@ -357,6 +357,14 @@ document.getElementById('btn-logout').addEventListener('click', () => {
 });
 
 /* ─── Filter Chips ───────────────────────────────────────────────────────────── */
+function setActiveChip(range) {
+  document.querySelectorAll('.chip').forEach(c => {
+    c.classList.toggle('active', c.dataset.range === range);
+  });
+  state.currentRange = range;
+  hide(document.getElementById('custom-range'));
+}
+
 document.querySelectorAll('.chip').forEach(chip => {
   chip.addEventListener('click', () => {
     document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
@@ -431,6 +439,8 @@ document.getElementById('event-form').addEventListener('submit', async (e) => {
       await apiFetch(`/api/events/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
     } else {
       await apiFetch('/api/events', { method: 'POST', body: JSON.stringify(payload) });
+      // Switch to "All Upcoming" so the new event is always visible regardless of current filter
+      setActiveChip('all');
     }
     closeEventModal();
     loadEvents();
