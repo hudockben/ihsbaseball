@@ -12,11 +12,12 @@ const JWT_SECRET = process.env.JWT_SECRET || 'ihs-calendar-secret-change-in-prod
 // sql`` tagged template returns rows as a plain array
 const sql = neon(process.env.DATABASE_URL || '');
 
-// Indiana County, PA coordinates (zip 15710 area)
+// Indiana County, PA coordinates (zip 15710 area) — default fallback
 const NOAA_LAT = 40.6217;
 const NOAA_LON = -79.1552;
 
-let noaaGridCache = null;
+const noaaGridCache = new Map(); // keyed by "lat,lon"
+const zipCoordsCache = new Map(); // keyed by zip string
 let dbInitialized = false;
 
 /* ─── Database Init ──────────────────────────────────────────────────────────── */
@@ -49,6 +50,7 @@ async function initDB() {
 
   // Migration: add end_time to existing tables that predate this column
   await sql`ALTER TABLE events ADD COLUMN IF NOT EXISTS end_time TIME`;
+  await sql`ALTER TABLE events ADD COLUMN IF NOT EXISTS zip_code TEXT`;
 
   // Seed default admin only when the table is empty
   const rows = await sql`SELECT COUNT(*)::int AS count FROM users`;
@@ -70,8 +72,9 @@ function normalizeEvent(row) {
 
   const event_time = String(row.event_time).slice(0, 5); // HH:MM
   const end_time = row.end_time ? String(row.end_time).slice(0, 5) : null;
+  const zip_code = row.zip_code || null;
 
-  return { ...row, event_date, event_time, end_time };
+  return { ...row, event_date, event_time, end_time, zip_code };
 }
 
 /* ─── Middleware ─────────────────────────────────────────────────────────────── */
@@ -208,21 +211,21 @@ app.get('/api/events', async (req, res) => {
 });
 
 app.post('/api/events', requireAuth, async (req, res) => {
-  const { title, location, event_date, event_time, end_time, details } = req.body;
+  const { title, location, event_date, event_time, end_time, details, zip_code } = req.body;
   if (!title || !location || !event_date || !event_time) {
     return res.status(400).json({ error: 'Title, location, date, and time are required' });
   }
 
   const rows = await sql`
-    INSERT INTO events (title, location, event_date, event_time, end_time, details, created_by)
-    VALUES (${title}, ${location}, ${event_date}, ${event_time}, ${end_time || null}, ${details || ''}, ${req.user.username})
+    INSERT INTO events (title, location, event_date, event_time, end_time, details, zip_code, created_by)
+    VALUES (${title}, ${location}, ${event_date}, ${event_time}, ${end_time || null}, ${details || ''}, ${zip_code || null}, ${req.user.username})
     RETURNING *
   `;
   res.status(201).json(normalizeEvent(rows[0]));
 });
 
 app.put('/api/events/:id', requireAuth, async (req, res) => {
-  const { title, location, event_date, event_time, end_time, details } = req.body;
+  const { title, location, event_date, event_time, end_time, details, zip_code } = req.body;
   if (!title || !location || !event_date || !event_time) {
     return res.status(400).json({ error: 'Title, location, date, and time are required' });
   }
@@ -235,6 +238,7 @@ app.put('/api/events/:id', requireAuth, async (req, res) => {
         event_time = ${event_time},
         end_time   = ${end_time || null},
         details    = ${details || ''},
+        zip_code   = ${zip_code || null},
         updated_at = NOW()
     WHERE id = ${req.params.id}
     RETURNING *
@@ -250,10 +254,25 @@ app.delete('/api/events/:id', requireAuth, async (req, res) => {
 });
 
 /* ─── Weather Route (NOAA proxy) ─────────────────────────────────────────────── */
-async function getNoaaGrid() {
-  if (noaaGridCache) return noaaGridCache;
+async function zipToCoords(zip) {
+  if (zipCoordsCache.has(zip)) return zipCoordsCache.get(zip);
+  const res = await fetch(`https://api.zippopotam.us/us/${zip}`, {
+    headers: { 'User-Agent': 'IHS-Calendar/1.0 (contact@example.com)' },
+    signal: AbortSignal.timeout(6000),
+  });
+  if (!res.ok) throw new Error(`Zip code ${zip} not found`);
+  const data = await res.json();
+  const place = data.places[0];
+  const coords = { lat: parseFloat(place.latitude), lon: parseFloat(place.longitude) };
+  zipCoordsCache.set(zip, coords);
+  return coords;
+}
+
+async function getNoaaGrid(lat, lon) {
+  const key = `${lat},${lon}`;
+  if (noaaGridCache.has(key)) return noaaGridCache.get(key);
   const res = await fetch(
-    `https://api.weather.gov/points/${NOAA_LAT},${NOAA_LON}`,
+    `https://api.weather.gov/points/${lat},${lon}`,
     {
       headers: { 'User-Agent': 'IHS-Calendar/1.0 (contact@example.com)' },
       signal: AbortSignal.timeout(8000),
@@ -261,16 +280,23 @@ async function getNoaaGrid() {
   );
   if (!res.ok) throw new Error(`NOAA points API returned ${res.status}`);
   const data = await res.json();
-  noaaGridCache = { forecastUrl: data.properties.forecast };
-  return noaaGridCache;
+  const result = { forecastUrl: data.properties.forecast };
+  noaaGridCache.set(key, result);
+  return result;
 }
 
 app.get('/api/weather', async (req, res) => {
-  const { date } = req.query;
+  const { date, zip } = req.query;
   if (!date) return res.status(400).json({ error: 'date parameter required (YYYY-MM-DD)' });
 
   try {
-    const grid = await getNoaaGrid();
+    let lat = NOAA_LAT, lon = NOAA_LON;
+    if (zip) {
+      const coords = await zipToCoords(zip);
+      lat = coords.lat;
+      lon = coords.lon;
+    }
+    const grid = await getNoaaGrid(lat, lon);
     const forecastRes = await fetch(grid.forecastUrl, {
       headers: { 'User-Agent': 'IHS-Calendar/1.0 (contact@example.com)' },
       signal: AbortSignal.timeout(8000),

@@ -98,18 +98,20 @@ const WEATHER_ICONS = {
   unknown:'🌡️',
 };
 
-async function fetchWeather(date) {
-  if (state.weatherCache[date]) return state.weatherCache[date];
+async function fetchWeather(date, zip) {
+  const cacheKey = zip ? `${date}:${zip}` : date;
+  if (state.weatherCache[cacheKey]) return state.weatherCache[cacheKey];
   try {
-    const data = await apiFetch(`/api/weather?date=${date}`);
-    state.weatherCache[date] = data;
+    const params = zip ? `date=${date}&zip=${encodeURIComponent(zip)}` : `date=${date}`;
+    const data = await apiFetch(`/api/weather?${params}`);
+    state.weatherCache[cacheKey] = data;
     return data;
   } catch {
     return { forecast: 'Weather unavailable', icon: 'cloudy' };
   }
 }
 
-async function injectWeather(cardEl, date) {
+async function injectWeather(cardEl, date, zip) {
   const container = cardEl.querySelector('.card-weather');
   if (!container) return;
 
@@ -128,7 +130,7 @@ async function injectWeather(cardEl, date) {
   }
 
   container.innerHTML = `<span class="weather-loading">Loading forecast...</span>`;
-  const w = await fetchWeather(date);
+  const w = await fetchWeather(date, zip);
   const icon = WEATHER_ICONS[w.icon] || WEATHER_ICONS.unknown;
 
   let tempStr = '';
@@ -170,7 +172,7 @@ function buildCard(event, index) {
         <span class="card-field-icon">📍</span>
         <div class="card-field-content">
           <span class="card-field-label">Location</span>
-          <span class="card-field-value">${escHtml(event.location)}</span>
+          <span class="card-field-value">${escHtml(event.location)}${event.zip_code ? `<span class="card-zip"> (${escHtml(event.zip_code)})</span>` : ''}</span>
         </div>
       </div>
 
@@ -253,7 +255,7 @@ function renderEvents(events) {
     const card = buildCard(event, i);
     grid.appendChild(card);
     // Load weather async (non-blocking)
-    injectWeather(card, event.event_date);
+    injectWeather(card, event.event_date, event.zip_code);
   });
 }
 
@@ -404,6 +406,7 @@ function openEditModal(event) {
   document.getElementById('event-time').value = event.event_time;
   document.getElementById('event-end-time').value = event.end_time || '';
   document.getElementById('event-location').value = event.location;
+  document.getElementById('event-zip').value = event.zip_code || '';
   document.getElementById('event-details').value = event.details || '';
   document.getElementById('event-modal-title').textContent = 'Edit Event';
   clearMsg(document.getElementById('event-error'));
@@ -425,6 +428,7 @@ document.getElementById('event-form').addEventListener('submit', async (e) => {
   clearMsg(err);
 
   const id = document.getElementById('event-id').value;
+  const zipVal = document.getElementById('event-zip').value.trim();
   const payload = {
     title: document.getElementById('event-title').value.trim(),
     event_date: document.getElementById('event-date').value,
@@ -432,6 +436,7 @@ document.getElementById('event-form').addEventListener('submit', async (e) => {
     end_time: document.getElementById('event-end-time').value || null,
     location: document.getElementById('event-location').value.trim(),
     details: document.getElementById('event-details').value.trim(),
+    zip_code: zipVal || null,
   };
 
   try {
